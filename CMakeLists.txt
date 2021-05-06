@@ -9,9 +9,6 @@ include_directories(${GAZEBO_INCLUDE_DIRS})
 link_directories(${GAZEBO_LIBRARY_DIRS})
 list(APPEND CMAKE_CXX_FLAGS "${GAZEBO_CXX_FLAGS}")
 
-add_library(hello_world SHARED hello_world.cc)
-target_link_libraries(hello_world ${GAZEBO_LIBRARIES})
-
 add_library(world_step SHARED world_step.cc)
 target_link_libraries(world_step ${GAZEBO_LIBRARIES} ${Boost_LIBRARIES})
 

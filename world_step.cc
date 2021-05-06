@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
-*/
+ */
 #include <sdf/sdf.hh>
 
 #include <boost/bind.hpp>
@@ -23,67 +23,142 @@
 #include "gazebo/msgs/msgs.hh"
 #include "gazebo/physics/physics.hh"
 #include "gazebo/transport/transport.hh"
+#include "gazebo/physics/World.hh"
+
+#include "packet.h"
+#define ROBOTICS_COSIM_BUFSIZE 1024
+#define GAZEBO_COSIM_PORT 8001
 
 /// \example examples/plugins/world_edit.cc
 /// This example creates a WorldPlugin, initializes the Transport system by
 /// creating a new Node, and publishes messages to alter gravity.
 namespace gazebo
 {
-  class WorldEdit : public WorldPlugin
-  {
-    public: void Load(physics::WorldPtr _parent, sdf::ElementPtr _sdf)
+    class WorldEdit : public WorldPlugin
     {
-      // Create a new transport node
-      this->node.reset(new transport::Node());
+        public: void Load(physics::WorldPtr _parent, sdf::ElementPtr _sdf)
+                {
+                    // Store the WorldPtr
+                    this->world = _parent;
 
-      // Initialize the node with the world name
-      this->node->Init(_parent->GetName());
+                    // Create a new transport node
+                    this->node.reset(new transport::Node());
 
-      std::cout << _parent->GetName() << std::endl;
+                    // Initialize the node with the world name
+                    this->node->Init(_parent->GetName());
 
-      // Create a publisher
-      this->pub = this->node->Advertise<msgs::WorldControl>("~/world_control");
+                    std::cout << _parent->GetName() << std::endl;
 
-      // Listen to the update event.  Event is broadcast every simulation 
-      // iteration.
-      this->updateConnection = event::Events::ConnectWorldUpdateEnd(
-          boost::bind(&WorldEdit::OnUpdate, this));
+                    // Create a publisher
+                    this->pub = this->node->Advertise<msgs::WorldControl>("~/world_control");
+
+                    // Listen to the update event.  Event is broadcast every simulation 
+                    // iteration.
+                    this->updateConnection = event::Events::ConnectWorldUpdateEnd(
+                            boost::bind(&WorldEdit::OnUpdate, this));
 
 
-      // Configure the initial message to the system
-      msgs::WorldControl worldControlMsg;
+                    // Configure the initial message to the system
+                    msgs::WorldControl worldControlMsg;
 
-      // Set the world to paused
-      worldControlMsg.set_pause(0);
+                    // Set the world to paused
+                    worldControlMsg.set_pause(0);
 
-      // Set the step flag to true
-      worldControlMsg.set_step(1);
+                    // Set the step flag to true
+                    worldControlMsg.set_step(1);
 
-      // Publish the initial message. 
-      this->pub->Publish(worldControlMsg);
-      std::cout << "Publishing Load." << std::endl;
-    }
+                    // Publish the initial message. 
+                    this->pub->Publish(worldControlMsg);
+                    std::cout << "Publishing Load." << std::endl;
 
-    // Called by the world update start event.
-    public: void OnUpdate() 
-    {
-        // Throttle Publication
-		getchar();
+                    // COSIM-CODE
+                    // Adapted from: https://www.cs.cmu.edu/afs/cs/academic/class/15213-f99/www/class26/tcpclient.c
+                    this->hostname = "localhost";
+                    this->portno = GAZEBO_COSIM_PORT;
 
-        msgs::WorldControl msg;
-        msg.set_step(1);
-        this->pub->Publish(msg);
-        std::cout << "Publishing OnUpdate." << std::endl;
-    }
+                    /* socket: create the socket */
+                    this->sockfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+                    if (this->sockfd < 0) {
+                        perror("ERROR opening socket");
+                        exit(0);
+                    }
+                    printf("Created socket!\n");
 
-    // Pointer to the world_controller
-    private: transport::NodePtr node;
-    private: transport::PublisherPtr pub;
+                    /* gethostbyname: get the server's DNS entry */
+                    this->server = gethostbyname(hostname);
+                    if (this->server == NULL) {
+                        fprintf(stderr,"ERROR, no such host as %s\n", hostname);
+                        exit(0);
+                    }
+                    printf("Got server's DNS entry!\n");
 
-    // Pointer to the update event connection
-    private: event::ConnectionPtr updateConnection;
-  };
+                    /* build the server's Internet address */
+                    bzero((char *) &this->serveraddr, sizeof(this->serveraddr));
+                    this->serveraddr.sin_family = AF_INET;
+                    bcopy((char *)this->server->h_addr, 
+                            (char *)&this->serveraddr.sin_addr.s_addr, this->server->h_length);
+                    this->serveraddr.sin_port = htons(this->portno);
+                    printf("Got server's Internet address!\n");
 
-  // Register this plugin with the simulator
-  GZ_REGISTER_WORLD_PLUGIN(WorldEdit)
+                    /* connect: create a connection with the server */
+                    while(connect(this->sockfd, (const sockaddr *) &this->serveraddr, sizeof(this->serveraddr)) < 0);
+                }
+
+                // Called by the world update start event.
+        public: void OnUpdate() 
+                {
+                    // Create WorldControl message to increment simulation tick
+                    msgs::WorldControl msg;
+                    msg.set_step(1);
+
+                    //this->n = net_read(this->sockfd, this->buf, ROBOTICS_COSIM_BUFSIZE);
+                    for(int i=0; i < 2; i++) 
+                    {
+                        bzero(this->buf, ROBOTICS_COSIM_BUFSIZE);
+                        do 
+                        {
+                            this->n = read(this->sockfd, this->buf, 1); 
+                        } while (this->n < 1);
+                        printf("Recieved Packet, length %d. Byte 0: %x\n", this->n, buf[0] & 0xFF);
+                        switch(buf[0] & 0xFF)
+                        {
+                            // Cycle the simulation by a tick
+                            case CS_GRANT_TOKEN: 
+                                printf("Granting token!\n");
+                                break;
+                            case CS_REQ_CYCLES:
+                                // Sent message to server with current tick
+                                printf("Recieved request for tick count!\n");
+                                bzero(this->buf, ROBOTICS_COSIM_BUFSIZE);
+                                sprintf(buf, "%d", world->GetIterations());
+                                write(this->sockfd, this->buf, strlen(this->buf));
+                                break;
+                        }
+                    }
+                    this->pub->Publish(msg);
+                    std::cout << "Publishing OnUpdate." << std::endl;
+
+                }
+
+                // Pointer to the world_controller
+        private: transport::NodePtr node;
+        private: transport::PublisherPtr pub;
+
+                 // Pointer to the update event connection
+        private: event::ConnectionPtr updateConnection;
+
+        private:
+                 physics::WorldPtr world;
+
+                 // TCP server stuff
+        private:
+                 int sockfd, portno, n;
+                 struct sockaddr_in serveraddr;
+                 struct hostent *server;
+                 char *hostname;
+                 char buf[ROBOTICS_COSIM_BUFSIZE];
+    };
+
+    // Register this plugin with the simulator
+    GZ_REGISTER_WORLD_PLUGIN(WorldEdit)
 }
