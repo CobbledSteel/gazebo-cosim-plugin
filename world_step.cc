@@ -18,6 +18,8 @@
 
 #include <boost/bind.hpp>
 
+#include <unistd.h>
+
 #include "gazebo/gazebo.hh"
 #include "gazebo/common/Plugin.hh"
 #include "gazebo/msgs/msgs.hh"
@@ -27,7 +29,7 @@
 
 #include "packet.h"
 #define ROBOTICS_COSIM_BUFSIZE 1024
-#define GAZEBO_COSIM_PORT 8001
+#define GAZEBO_COSIM_PORT 10101
 
 /// \example examples/plugins/world_edit.cc
 /// This example creates a WorldPlugin, initializes the Transport system by
@@ -73,6 +75,7 @@ namespace gazebo
 
                     // COSIM-CODE
                     // Adapted from: https://www.cs.cmu.edu/afs/cs/academic/class/15213-f99/www/class26/tcpclient.c
+                    //this->hostname = "52.90.99.213";
                     this->hostname = "localhost";
                     this->portno = GAZEBO_COSIM_PORT;
 
@@ -119,16 +122,16 @@ namespace gazebo
                         {
                             this->n = read(this->sockfd, this->buf, 1); 
                         } while (this->n < 1);
-                        printf("Recieved Packet, length %d. Byte 0: %x\n", this->n, buf[0] & 0xFF);
+                        //printf("Recieved Packet, length %d. Byte 0: %x\n", this->n, buf[0] & 0xFF);
                         switch(buf[0] & 0xFF)
                         {
                             // Cycle the simulation by a tick
                             case CS_GRANT_TOKEN: 
-                                printf("Granting token!\n");
+                                //printf("Granting token!\n");
                                 break;
                             case CS_REQ_CYCLES:
                                 // Sent message to server with current tick
-                                printf("Recieved request for tick count!\n");
+                                //printf("Recieved request for tick count!\n");
                                 bzero(this->buf, ROBOTICS_COSIM_BUFSIZE);
                                 sprintf(buf, "%d", world->GetIterations());
                                 write(this->sockfd, this->buf, strlen(this->buf));
@@ -136,7 +139,7 @@ namespace gazebo
                         }
                     }
                     this->pub->Publish(msg);
-                    std::cout << "Publishing OnUpdate." << std::endl;
+                    //std::cout << "Publishing OnUpdate." << std::endl;
 
                 }
 
